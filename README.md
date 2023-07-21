@@ -1,9 +1,11 @@
 # SNP genotyping
 This turorial contians my pipeline and will help you perform read alignment, genotyping, and varient filtering for WGS data. Going from high throughput Illimuna reads (fq.gz) to a ready to use SNP dataset (VCF) for population genomic analyses. This tutorial is for people who are just beginning with WGS analyses, but also for people who want to learn how to improve their analyses.
-This tutorial assumes you have te following:
+This tutorial assumes you have/know te following:
 * Reference genome for your species
 * Paired-End (PE) Illumina short-read data for multiple individuals
 * Location information for each of your individuals
+* Access to a high performance cluster
+* basic UNIX/bash scripting to submit jobs to SLURM (for VUW users on raapoi please see their [documentation](https://vuw-research-computing.github.io/raapoi-docs/))
 
 This tutorial includes the following steps (program)
 ## 1) Read alignment
@@ -27,7 +29,5 @@ Here we take the the sequencing output you've received from your sequencing prov
 read1: CA118001_R1.gq.gz
 read2: CA118001_R2.gq.gz
 ```
-
-
-
 ## Quality checking (fastqc)
+
