@@ -19,6 +19,7 @@ You will need the following programs installed on your cluster (and load via mod
 6. VCFtools
 7. R
 8. htslib
+9. Plink
 
 This tutorial includes the following steps (program)
 ### 1) Read alignment
@@ -52,9 +53,14 @@ In the example, some quality metrics were flagged for potential issues.
 2. per tile sequence quality. local reduction in sequence quality on the flow cell. Some local reductions is not bad, as long as your "Per base sequence quality" is still good.
 3. Overrepresented sequences. Most likely low quality reads that will be filtered out in coming stages
 
+Also note that you can check that the Adapter Content. These we will remove in the following section
+
 if you have a lot of samples and wnat to summerise the output from your fastqc reports we can run multiqc which creates a single summary file
 ```
 cd /folder/containing/fastqc/reports
 multiqc .
 ```
 ## Adapter removal ([AdapterRemoval](https://adapterremoval.readthedocs.io/en/stable/))
+
+To remove the adapters from our sequences we first need to which adapters were used during library preperation.
+This information should be provided by your sequences provider or you can often see which adapters found identified by fastqc
