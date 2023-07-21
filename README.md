@@ -1,4 +1,4 @@
-# Read_Aligenlment_WGS_data
-perform read alignment and genotyping for WGS data
+# SNP genotyping
+perform read alignment, genotyping, and varient filtering for WGS data
 
-** test to see if this works **
+* test to see if this works
