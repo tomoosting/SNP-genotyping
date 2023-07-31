@@ -59,7 +59,7 @@ if you have a lot of samples and wnat to summerise the output from your fastqc r
 cd /folder/containing/fastqc/reports
 multiqc .
 ```
-## Read alignmetn with [paleomix](https://paleomix.readthedocs.io/en/stable/bam_pipeline/index.html) - [BAM pipeline](https://paleomix.readthedocs.io/en/stable/bam_pipeline/index.html)
+## Read alignment with [paleomix](https://paleomix.readthedocs.io/en/stable/bam_pipeline/index.html) - [BAM pipeline](https://paleomix.readthedocs.io/en/stable/bam_pipeline/index.html)
 I highly recommand PALEOMIX to make your life easier and streamline your analyses when you have many individuals. It's been designed to work with ancietn DNA but also works great for modern samples. It caries out mutiple analytical steps and generates useful summary statistics. Another useful feature is that it allows you align reads to multiple genomes, and create seperate bam files. This allows you to obtain seperate bam files file the nulclear and mitochodnrial genomes and prevent unwanted misaligned reads to your nuclear genome. Paleomix uses a range of well known bioinformatic tools (i.e. AdapterRemoval, BWA, picard, samtools). For more information please have a look at their page which containes all you need to know.
 Paleomix inclues the following steps:
 * create prefixes for your reference
@@ -84,4 +84,92 @@ samtools index clipped_alignment.bam
 Paleomix creates A LOT of temporary files you no longer need ones you're happy the analyses was performed correctly. I would recommend keeping the final alignment (BAM) files for the nuclear and if provided the mitochondrial genome, the makefile (YAML) that contains all the parameters used to generated the alignmetns, and the summary.txt file.
 Ones you have generated alignmeng (BAM) files for all you individuals you can move forward to genotyping.
 
-# STEP 2: genotyping
+# STEP 2: Genotyping
+With genotyping you take all the alignments and determine where in the genome in mutation have arisen, and save these in a "variant call format" or VCF file. I can't stress this enough, take the time to [understand](https://en.wikipedia.org/wiki/Variant_Call_Format) how that data is structured in a VCF file. To save (a lot!) of time you can run an array script to perform genotyping for each scafoold/chromosome in parallel. If you havce a good assembly I would only genoytpe for the scaffolds that represent the largest fraction of your genome. For example, if you have 6000 scaffolds in your reference genome but 95% of it is contained in the 25 largest scaffolds, I would only perform genotyping on those first 25 scaffolds. After genotyping with bcftools we will use the same program to generate tags for multiple fields.
+!!!The following piece of code does assume that you referece genome is ordered by size, listing the largest scaffold first!!!
+```
+#!/bin/bash
+#SBATCH --array 1-25
+#SBATCH --cpus-per-task=2
+#SBATCH --mem-per-cpu=8G
+#SBATCH --partition=parallel
+#SBATCH --time=2-0:00
+#SBATCH --job-name=bcftools_mpileup
+
+###!!!###									   ###!!!####
+# determine the number of scaffold you want to genotype #
+#               change --array accordingly				#
+###!!!###									   ###!!!####
+
+#load modules
+module load htslib/1.9
+module load bcftools/1.10.1
+
+#variables
+SCAFFOLD=${SLURM_ARRAY_TASK_ID}
+PROJECT=$1
+SET_NEW=$PROJECT'_'$2
+TMP_DIR=$SCRATCH/projects/$PROJECT/data/snp/$SET_NEW/tmp
+mkdir -p $TMP_DIR
+
+# Path to your reference genome
+REF=$SCRATCH/projects/$PROJECT/resources/reference_genomes/nuclear/Chrysophrys_auratus.v.1.0.all.assembly.units.fasta
+
+# List with paths to all the bam (individual) you want to analyse.
+BAMLIST=$SCRATCH/projects/$PROJECT/resources/bam_lists/$SET_NEW'_bam.list'
+
+# Obtain the scaffold name for the ith scaffold from your reference. A fai file should have been created when paoleomix indexed your genome.
+REGION=$( head -n $SCAFFOLD $REF.fai | tail -n 1 | cut -f 1 )
+
+#genotype
+bcftools mpileup 	-Ov 																\
+					-a 'FORMAT/AD,FORMAT/DP,FORMAT/SP,FORMAT/ADF,FORMAT/ADR,INFO/AD'	\
+					-f $REF 															\
+					-r $REGION															\
+					-b $BAMLIST															|
+bcftools call -Ov -mv > $TMP_DIR/$REGION'_'$SET_NEW'_raw_tmp1.vcf'
+
+#update INFO fields
+bcftools 	+fill-tags 	$TMP_DIR/$REGION'_'$SET_NEW'_raw_tmp1.vcf'			\
+			-Oz -o 		$TMP_DIR/$REGION'_'$SET_NEW'_raw_tmp2.vcf.gz'		\
+			-- -t AC,AF,AN,MAF,NS,AC_Hom,AC_Het			
+#compress output to reduce file size
+bgzip --reindex $TMP_DIR/$REGION'_'$SET_NEW'_raw_tmp2.vcf.gz'
+
+#clean up
+rm $TMP_DIR/$REGION'_'$SET_NEW'_raw_tmp1.vcf'
+```
+Now you generated compressed vcf (vcf.gz) files for each scaffold which we want to merge into a single vcf.gz file containing all "raw" SNPS. With raw I mean that we have not perfermed any filtering of low quality genotypes.
+```
+#!/bin/bash
+#SBATCH --cpus-per-task=10
+#SBATCH --mem=100G
+#SBATCH --partition=bigmem
+#SBATCH --time=1-0:00
+#SBATCH --job-name=bcf_concat
+
+#load modules
+module load htslib/1.9
+module load vcftools/0.1.16
+module load bcftools/1.10.1
+
+#variables
+PROJECT=$1
+SET_NEW=$PROJECT'_'$2
+
+# Path where all vcf files are located
+TMP_DIR=$SCRATCH/projects/$PROJECT/data/snp/$SET_NEW/tmp
+
+# Extension to new VCF file
+VCF_NEW=$SCRATCH/projects/$PROJECT/data/snp/$SET_NEW/$SET_NEW'_raw'
+
+#merge vcf files in tmp dir
+bcftools concat -Oz -o $VCF_NEW'.vcf.gz' $( ls -v $TMP_DIR/*'_raw_tmp2.vcf.gz' ) --threads 10
+
+#create indexes for raw vcf file
+bgzip --reindex $VCF_NEW'.vcf.gz'
+tabix -p vcf $VCF_NEW'.vcf.gz'
+```
+Now that we have a file containing all genotypes we can start filtering end work toward vcf files that we can use to perform population genomic analyses.
+
+# STEP 3: SNP filtering 
