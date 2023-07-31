@@ -12,8 +12,7 @@ Shell scripts are included in the tutorial but will need to be modified to suite
 You will need the following programs installed on your cluster (and load via module load), locally installed, or as an executable jar file. The version mentioned are the ones I used, ands would recommend using the same or newer. This tutorial uses custom Rscript which you can find in scipts directory.
 1. fastqc
 2. multiqc
-2. AdapterRemoval
-3. BWA-kit
+3. paleomix
 4. SAMtools
 5. BCFtools
 6. VCFtools
@@ -60,7 +59,29 @@ if you have a lot of samples and wnat to summerise the output from your fastqc r
 cd /folder/containing/fastqc/reports
 multiqc .
 ```
-## Adapter removal ([AdapterRemoval](https://adapterremoval.readthedocs.io/en/stable/))
+## Read alignmetn with [paleomix](https://paleomix.readthedocs.io/en/stable/bam_pipeline/index.html) - [BAM pipeline](https://paleomix.readthedocs.io/en/stable/bam_pipeline/index.html)
+I highly recommand PALEOMIX to make your life easier and streamline your analyses when you have many individuals. It's been designed to work with ancietn DNA but also works great for modern samples. It caries out mutiple analytical steps and generates useful summary statistics. Another useful feature is that it allows you align reads to multiple genomes, and create seperate bam files. This allows you to obtain seperate bam files file the nulclear and mitochodnrial genomes and prevent unwanted misaligned reads to your nuclear genome. Paleomix uses a range of well known bioinformatic tools (i.e. AdapterRemoval, BWA, picard, samtools). For more information please have a look at their page which containes all you need to know.
+Paleomix inclues the following steps:
+* create prefixes for your reference
+* quality trimming and removing adapters
+* Read alignment 
+* remove duplicates
+* local realignment
+To run paleomix you first need to create a makefile (YAML) which contains all the parameters for the different programs and provide the paths to your reference genome(s) and read files. I've provided an example makefile (example.yaml) and a detailed description of component can be foudn [here](https://paleomix.readthedocs.io/en/stable/bam_pipeline/makefile.html). To trim off any adapter sequences you need to which protocol was used to create the library. Usesually this will from Illumina and you can find the correct adapter sequences for each library preperation protol [here](https://knowledge.illumina.com/library-preparation/general/library-preparation-general-reference_material-list/000001314).
+Ones you have your makefile you run it like:
+```
+paleomix bam_pipeline run PATH/TO/MAKEFILE.yaml
+```
+I also prefer to remove all the "clipped" from my alignments. These are reads where only part of the sequence mapped to the genome and the rest is masked (soft-clipped), or removed (hard-clipped) from the BAM file. I remove these reads using samtools
+```
+# create list of all clipped reads
+samtools view paleomix_output.bam |awk '$6 ~ /H|S/ {print $1}' |sort -u > clipped_reads_list.txt
+# filter clipped reads
+samtools view -h paleomix_output.bam | fgrep -wvf clipped_reads_list.txt | samtools view -b - -o clipped_alignment.bam
+# create index for new bam file
+samtools index clipped_alignment.bam
+```
+Paleomix creates A LOT of temporary files you no longer need ones you're happy the analyses was performed correctly. I would recommend keeping the final alignment (BAM) files for the nuclear and if provided the mitochondrial genome, the makefile (YAML) that contains all the parameters used to generated the alignmetns, and the summary.txt file.
+Ones you have generated alignmeng (BAM) files for all you individuals you can move forward to genotyping.
 
-To remove the adapters from our sequences we first need to which adapters were used during library preperation.
-This information should be provided by your sequences provider or you can often see which adapters found identified by fastqc
+# STEP 2: genotyping
