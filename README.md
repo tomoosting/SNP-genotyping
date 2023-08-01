@@ -96,10 +96,10 @@ With genotyping you take all the alignments and determine where in the genome in
 #SBATCH --time=2-0:00
 #SBATCH --job-name=bcftools_mpileup
 
-###!!!###									   ###!!!####
+###!!!###                                      ###!!!####
 # determine the number of scaffold you want to genotype #
-#               change --array accordingly				#
-###!!!###									   ###!!!####
+#               change --array accordingly              #
+###!!!###                                      ###!!!####
 
 #load modules
 module load htslib/1.9
