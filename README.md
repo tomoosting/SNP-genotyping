@@ -122,17 +122,17 @@ BAMLIST=$SCRATCH/projects/$PROJECT/resources/bam_lists/$SET_NEW'_bam.list'
 REGION=$( head -n $SCAFFOLD $REF.fai | tail -n 1 | cut -f 1 )
 
 #genotype
-bcftools mpileup 	-Ov 																\
-					-a 'FORMAT/AD,FORMAT/DP,FORMAT/SP,FORMAT/ADF,FORMAT/ADR,INFO/AD'	\
-					-f $REF 															\
-					-r $REGION															\
-					-b $BAMLIST															|
+bcftools mpileup -Ov                                                              \
+                 -a 'FORMAT/AD,FORMAT/DP,FORMAT/SP,FORMAT/ADF,FORMAT/ADR,INFO/AD' \
+                 -f $REF                                                          \
+                 -r $REGION                                                       \
+                 -b $BAMLIST                                                      |
 bcftools call -Ov -mv > $TMP_DIR/$REGION'_'$SET_NEW'_raw_tmp1.vcf'
 
 #update INFO fields
-bcftools 	+fill-tags 	$TMP_DIR/$REGION'_'$SET_NEW'_raw_tmp1.vcf'			\
-			-Oz -o 		$TMP_DIR/$REGION'_'$SET_NEW'_raw_tmp2.vcf.gz'		\
-			-- -t AC,AF,AN,MAF,NS,AC_Hom,AC_Het			
+bcftools +fill-tags $TMP_DIR/$REGION'_'$SET_NEW'_raw_tmp1.vcf'    \
+        -Oz -o      $TMP_DIR/$REGION'_'$SET_NEW'_raw_tmp2.vcf.gz' \
+         -- -t AC,AF,AN,MAF,NS,AC_Hom,AC_Het			
 #compress output to reduce file size
 bgzip --reindex $TMP_DIR/$REGION'_'$SET_NEW'_raw_tmp2.vcf.gz'
 
@@ -198,6 +198,11 @@ Here we remove low quality genotypes and and select only biallilic SNPs, and inv
 #SBATCH --time=2-0:00
 #SBATCH --job-name=QC_filtering
 
+###!!!###                                       ###!!!####
+# determine the number of scaffolds you want to genotype #
+#               change --array accordingly               #
+###!!!###                                       ###!!!####
+
 ###run input
 PROJECT=$1
 SET=$PROJECT'_'$2
@@ -226,45 +231,45 @@ TMP=$DIR/$LG'_'$SET
 bcftools view -Oz -o $TMP'_tmp1.vcf.gz' $VCF'_raw.vcf.gz' -r $LG
 
 ##2## filter genotyeps with DP < 3
-vcftools	--gzvcf $TMP'_tmp1.vcf.gz' 	\
-			--out 	$TMP'_tmp2'	 		\
-			--minDP 3 					\
-			--remove-indels  			\
-			--recode-INFO-all --recode
+vcftools --gzvcf $TMP'_tmp1.vcf.gz' \
+         --out 	$TMP'_tmp2'         \
+         --minDP 3                  \
+         --remove-indels            \
+         --recode-INFO-all --recode
 mv $TMP'_tmp2.recode.vcf' $TMP'_tmp2.vcf'
 bgzip $TMP'_tmp2.vcf'
 
 ##3## basic filter parameters
-vcftools 	--gzvcf $TMP'_tmp2.vcf.gz'					\
-			--out $TMP'_tmp3' 	  --max-missing 0.95	\
-			--min-alleles 2       --max-alleles 2 		\
-			--min-meanDP  8       --max-meanDP 25 		\
-			--minQ 600 			  --maf 0.01			\
-			--recode-INFO-all 	  --recode
+vcftools --gzvcf $TMP'_tmp2.vcf.gz'	          \
+         --out $TMP'_tmp3' --max-missing 0.95 \
+         --min-alleles 2   --max-alleles 2    \
+         --min-meanDP  8   --max-meanDP 25    \
+         --minQ 600        --maf 0.01         \
+         --recode-INFO-all 	  --recode
 mv $TMP'_tmp3.recode.vcf' $TMP'_tmp3.vcf'
 bgzip $TMP'_tmp3.vcf' 
 
 ##4## testallelic imbalance
 #Select output from VCF (genotypes)
-vcftools 	--gzvcf $TMP'_tmp3.vcf.gz' 	\
-			--out 	$TMP'_tmp4'			\
-			--extract-FORMAT-info GT 	
+vcftools --gzvcf $TMP'_tmp3.vcf.gz' \
+         --out 	$TMP'_tmp4'         \
+         --extract-FORMAT-info GT 	
 #Select output from VCF (allelic depth)
-vcftools 	--gzvcf $TMP'_tmp3.vcf.gz' 	\
-			--out 	$TMP'_tmp4'			\
-			--extract-FORMAT-info AD
+vcftools --gzvcf $TMP'_tmp3.vcf.gz' \
+         --out 	$TMP'_tmp4'         \
+         --extract-FORMAT-info AD
 #run binomial test to filter sites with allelic imbalance - could require high mem when many SNPs are to be analysed
-Rscript 	$AB_script 	--GT_file  $TMP'_tmp4.GT.FORMAT' 	\
-						--AD_file  $TMP'_tmp4.AD.FORMAT' 	\
-						--out_file $TMP'_tmp4_qc' 			\
-						--conf.level 0.99			 		\
-						--plots TRUE 						\
-						--remove $AB_exclude	### make a list of sample names you want to exclude
+Rscript $AB_script --GT_file  $TMP'_tmp4.GT.FORMAT' \
+                   --AD_file  $TMP'_tmp4.AD.FORMAT' \
+                   --out_file $TMP'_tmp4_qc'        \
+                   --conf.level 0.99                \
+                   --plots TRUE                     \
+                   --remove $AB_exclude	### make a list of sample names you want to exclude
 ##5## remove sites suffering of allelic imbalance
-vcftools 	--gzvcf $TMP'_tmp3.vcf.gz' 		\
-			--out 	$TMP'_tmp5_qc'			\
-			--recode-INFO-all --recode		\
-			--exclude-positions $TMP'_tmp4_qc.exclude_pval0.01.list'
+vcftools --gzvcf $TMP'_tmp3.vcf.gz' \
+         --out 	$TMP'_tmp5_qc'      \
+         --recode-INFO-all --recode \
+         --exclude-positions $TMP'_tmp4_qc.exclude_pval0.01.list'
 mv $TMP'_tmp5_qc.recode.vcf' $TMP'_tmp5_qc.vcf'
 bgzip -fi $TMP'_tmp5_qc.vcf'
 tabix -fp vcf $TMP'_tmp5_qc.vcf.gz'
