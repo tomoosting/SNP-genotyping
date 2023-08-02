@@ -86,7 +86,9 @@ Ones you have generated alignmeng (BAM) files for all you individuals you can mo
 
 # STEP 2: Genotyping
 With genotyping you take all the alignments and determine where in the genome in mutation have arisen, and save these in a "variant call format" or VCF file. I can't stress this enough, take the time to [understand](https://en.wikipedia.org/wiki/Variant_Call_Format) how that data is structured in a VCF file. To save (a lot!) of time you can run an array script to perform genotyping for each scafoold/chromosome in parallel. If you havce a good assembly I would only genoytpe for the scaffolds that represent the largest fraction of your genome. For example, if you have 6000 scaffolds in your reference genome but 95% of it is contained in the 25 largest scaffolds, I would only perform genotyping on those first 25 scaffolds. After genotyping with bcftools we will use the same program to generate tags for multiple fields.
-!!!The following piece of code does assume that you referece genome is ordered by size, listing the largest scaffold first!!!
+**!!!NOTE!!!**
+You will see me refer to PROJECT and SET in the following scripts. This is so that you can easily perform the same analyses for multiple species (PROJECT), and groups of indiviauls (SET).
+**!!!NOTE!!!**
 ```
 #!/bin/bash
 #SBATCH --array 1-25
@@ -179,6 +181,7 @@ After all the filter steps we will have the following data sets:
 2. qc - vcf file containing all high-quality SNPs that have passed innitial quality check (qc)
 3. outlier - vcf file containing outlier SNPs that show significnat signs of selection
 4. neutral -  vcf file containing independantly segregating SNPs that show no sign of selection
+
 For most population genomic analyses you will be using the neutral SNP dataset but the qc and outlier data sets can also provide unique insights. We also first need to identify high-quality SNPs and outlier SNPs before we can get our nuetral dataset, so there's really no reason not to generate them.
 Depending on how many SNPs you have in your raw.vcf, the initial filter steps can take a lot of time if you filter the chromosomes in series. Just like we did for genotyping we will run an array script that performs these innitial filter steps per scaffold/linkage group/chromosome of your data. It may seem a little redundant to first merge all the seperate raw.vcf files into a sigle vcf and then split them up again for SNPs filtereing. But I like that after genotyping we and up with a single file and we delate all other intermediate files, making your data management much easier!
 
@@ -206,7 +209,7 @@ Here we remove low quality genotypes and and select only biallilic SNPs, and inv
 ###run input
 PROJECT=$1
 SET=$PROJECT'_'$2
-LG=LG${SLURM_ARRAY_TASK_ID}
+N=${SLURM_ARRAY_TASK_ID}
 
 ###load packages
 module load htslib/1.9
@@ -220,6 +223,9 @@ AB_script=PATH/TO/allelelic_imbalance_4.0.R
 ###resrouces
 REF=$SCRATCH/projects/$PROJECT/resources/reference_genomes/nuclear/Chrysophrys_auratus.v.1.0.all.assembly.units.fasta
 AB_exclude=$SCRATCH/projects/$PROJECT/resources/sample_info/high_coverage_samples.list #only if innital tests for allelic imbalance suggest removal of certain individuals.
+
+###Obtain the scaffold name for the ith scaffold from your reference. A fai file should have been created when paoleomix indexed your genome.
+LG=$( head -n $N $REF.fai | tail -n 1 | cut -f 1 )
 
 ###set paths
 VCF=$SCRATCH/projects/$PROJECT/data/snp/$SET/$SET
@@ -249,7 +255,7 @@ vcftools --gzvcf $TMP'_tmp2.vcf.gz'	          \
 mv $TMP'_tmp3.recode.vcf' $TMP'_tmp3.vcf'
 bgzip $TMP'_tmp3.vcf' 
 
-##4## testallelic imbalance
+##4## test for allelic imbalance
 #Select output from VCF (genotypes)
 vcftools --gzvcf $TMP'_tmp3.vcf.gz' \
          --out 	$TMP'_tmp4'         \
@@ -273,5 +279,53 @@ vcftools --gzvcf $TMP'_tmp3.vcf.gz' \
 mv $TMP'_tmp5_qc.recode.vcf' $TMP'_tmp5_qc.vcf'
 bgzip -fi $TMP'_tmp5_qc.vcf'
 tabix -fp vcf $TMP'_tmp5_qc.vcf.gz'
+```
+Now we just have to merge all the qc vcf files in to a single vcf file. For a lot of downstream analyses you will want to load your SNPs data into R. I've become a big fan of the package [SNPRelate](https://www.bioconductor.org/packages/release/bioc/html/SNPRelate.html) from bioconductor for analysing SNP data in R. I wrote a small Rscript that converts a vcf.gz file to a gds file required to use SNPRelate. Large data sets can be loaded into R really quick with SNPRelate and the gds format. My population genomics repository also uses this package extensively. Similarly, I wrote a small Rscript to convert a gds file to plink (bed) format. To do this you can also supply a tab-delimited population file with two columns 1) Sample name 2) population name.     
 
 ```
+#!/bin/bash
+#SBATCH --cpus-per-task=10
+#SBATCH --mem=40G
+#SBATCH --partition=bigmem
+#SBATCH --time=0-5:00
+#SBATCH --job-name=merge_vcf_bcftools
+
+###run input
+PROJECT=$1
+SET=$PROJECT'_'$2
+
+###load packages
+module load htslib/1.9
+module load bcftools/1.10.1
+module load R/4.0.2
+
+#custom scripts
+vcf2R=PATH/TO/vcf2Rinput.R
+gds2plink=PATH/TO/gds2plink.R
+
+#tab delimited popualtion file
+POP=PATH/TO/$PROJECT'_pop_info.tsv'
+
+###set paths
+VCF=$SCRATCH/projects/$PROJECT/data/snp/$SET/$SET'_qc'
+TMP=$SCRATCH/projects/$PROJECT/data/snp/$SET/tmp
+
+#merge vcf files in tmp dir
+bcftools concat -Oz -o $VCF.vcf.gz $( ls -v $TMP/*'_tmp5_qc.vcf.gz' ) --threads 10
+bgzip --reindex $VCF.vcf.gz
+tabix -p vcf $VCF.vcf.gz
+
+#create gds
+Rscript $vcf2R --gzvcf $VCF.vcf.gz  \
+               --snprelate_out $VCF	
+
+#create plink bed file
+Rscript $gds2plink --gds_file $VCF.gds \
+                   --out      $VCF     \
+                   --pop_file $POP
+
+#clean up - remove the # if you're sure you dont need the temporary output
+#rm -r $TMP
+```
+#### Identify outlier SNPs
+Now that we have a vcf file containing high-quality SNPs we can identify 
