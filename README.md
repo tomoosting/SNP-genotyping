@@ -96,10 +96,10 @@ With genotyping you take all the alignments and determine where in the genome in
 #SBATCH --time=2-0:00
 #SBATCH --job-name=bcftools_mpileup
 
-###!!!###                                      ###!!!####
-# determine the number of scaffold you want to genotype #
-#               change --array accordingly              #
-###!!!###                                      ###!!!####
+###!!!###                                       ###!!!####
+# determine the number of scaffolds you want to genotype #
+#               change --array accordingly               #
+###!!!###                                       ###!!!####
 
 #load modules
 module load htslib/1.9
@@ -170,6 +170,103 @@ bcftools concat -Oz -o $VCF_NEW'.vcf.gz' $( ls -v $TMP_DIR/*'_raw_tmp2.vcf.gz' )
 bgzip --reindex $VCF_NEW'.vcf.gz'
 tabix -p vcf $VCF_NEW'.vcf.gz'
 ```
-Now that we have a file containing all genotypes we can start filtering end work toward vcf files that we can use to perform population genomic analyses.
+Now that we have a file containing all genotypes we can start filtering and work toward vcf files that we can use to perform population genomic analyses.
 
 # STEP 3: SNP filtering 
+We will perform multiple filter steps and generate multiple VCF files. Different SNPs data sets can be used for different types of analyses.
+After all the filter steps we will have the following data sets:
+1. raw - vcf file we already have containing all genotypes
+2. qc - vcf file containing all high-quality SNPs that have passed innitial quality check (qc)
+3. outlier - vcf file containing outlier SNPs that show significnat signs of selection
+4. neutral -  vcf file containing independantly segregating SNPs that show no sign of selection
+For most population genomic analyses you will be using the neutral SNP dataset but the qc and outlier data sets can also provide unique insights. We also first need to identify high-quality SNPs and outlier SNPs before we can get our nuetral dataset, so there's really no reason not to generate them.
+Depending on how many SNPs you have in your raw.vcf, the initial filter steps can take a lot of time if you filter the chromosomes in series. Just like we did for genotyping we will run an array script that performs these innitial filter steps per scaffold/linkage group/chromosome of your data. It may seem a little redundant to first merge all the seperate raw.vcf files into a sigle vcf and then split them up again for SNPs filtereing. But I like that after genotyping we and up with a single file and we delate all other intermediate files, making your data management much easier!
+
+#### QC filter
+Here we remove low quality genotypes and and select only biallilic SNPs, and involves the following steps:
+1. subsample vcf
+2. set individual genotypes with low coverage to missing
+3. remove low quality SNPs 
+4. test for allelic imbalance (custom Rscript)
+5. remove SNPs with allelic imbalance
+```
+#!/bin/bash
+#SBATCH --array 1-25
+#SBATCH --cpus-per-task=2
+#SBATCH --mem-per-cpu=4G
+#SBATCH --partition=parallel
+#SBATCH --time=2-0:00
+#SBATCH --job-name=QC_filtering
+
+###run input
+PROJECT=$1
+SET=$PROJECT'_'$2
+LG=LG${SLURM_ARRAY_TASK_ID}
+
+###load packages
+module load htslib/1.9
+module load vcftools/0.1.16
+module load bcftools/1.10.1
+module load R/4.0.2
+
+#Rscript paths
+AB_script=PATH/TO/allelelic_imbalance_4.0.R
+
+###resrouces
+REF=$SCRATCH/projects/$PROJECT/resources/reference_genomes/nuclear/Chrysophrys_auratus.v.1.0.all.assembly.units.fasta
+AB_exclude=$SCRATCH/projects/$PROJECT/resources/sample_info/high_coverage_samples.list #only if innital tests for allelic imbalance suggest removal of certain individuals.
+
+###set paths
+VCF=$SCRATCH/projects/$PROJECT/data/snp/$SET/$SET
+DIR=$SCRATCH/projects/$PROJECT/data/snp/$SET/tmp
+mkdir -p $DIR
+TMP=$DIR/$LG'_'$SET
+
+##1## subsample vcf
+bcftools view -Oz -o $TMP'_tmp1.vcf.gz' $VCF'_raw.vcf.gz' -r $LG
+
+##2## filter genotyeps with DP < 3
+vcftools	--gzvcf $TMP'_tmp1.vcf.gz' 	\
+			--out 	$TMP'_tmp2'	 		\
+			--minDP 3 					\
+			--remove-indels  			\
+			--recode-INFO-all --recode
+mv $TMP'_tmp2.recode.vcf' $TMP'_tmp2.vcf'
+bgzip $TMP'_tmp2.vcf'
+
+##3## basic filter parameters
+vcftools 	--gzvcf $TMP'_tmp2.vcf.gz'					\
+			--out $TMP'_tmp3' 	  --max-missing 0.95	\
+			--min-alleles 2       --max-alleles 2 		\
+			--min-meanDP  8       --max-meanDP 25 		\
+			--minQ 600 			  --maf 0.01			\
+			--recode-INFO-all 	  --recode
+mv $TMP'_tmp3.recode.vcf' $TMP'_tmp3.vcf'
+bgzip $TMP'_tmp3.vcf' 
+
+##4## testallelic imbalance
+#Select output from VCF (genotypes)
+vcftools 	--gzvcf $TMP'_tmp3.vcf.gz' 	\
+			--out 	$TMP'_tmp4'			\
+			--extract-FORMAT-info GT 	
+#Select output from VCF (allelic depth)
+vcftools 	--gzvcf $TMP'_tmp3.vcf.gz' 	\
+			--out 	$TMP'_tmp4'			\
+			--extract-FORMAT-info AD
+#run binomial test to filter sites with allelic imbalance - could require high mem when many SNPs are to be analysed
+Rscript 	$AB_script 	--GT_file  $TMP'_tmp4.GT.FORMAT' 	\
+						--AD_file  $TMP'_tmp4.AD.FORMAT' 	\
+						--out_file $TMP'_tmp4_qc' 			\
+						--conf.level 0.99			 		\
+						--plots TRUE 						\
+						--remove $AB_exclude	### make a list of sample names you want to exclude
+##5## remove sites suffering of allelic imbalance
+vcftools 	--gzvcf $TMP'_tmp3.vcf.gz' 		\
+			--out 	$TMP'_tmp5_qc'			\
+			--recode-INFO-all --recode		\
+			--exclude-positions $TMP'_tmp4_qc.exclude_pval0.01.list'
+mv $TMP'_tmp5_qc.recode.vcf' $TMP'_tmp5_qc.vcf'
+bgzip -fi $TMP'_tmp5_qc.vcf'
+tabix -fp vcf $TMP'_tmp5_qc.vcf.gz'
+
+```
