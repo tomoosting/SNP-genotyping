@@ -328,4 +328,67 @@ Rscript $gds2plink --gds_file $VCF.gds \
 #rm -r $TMP
 ```
 #### Identify outlier SNPs
-Now that we have a vcf file containing high-quality SNPs we can identify 
+Now that we have a vcf file containing high-quality SNPs we can identify outlier loci. There are many programs that that can be used to identify outliers. Here we'll use [pcadapt](https://bcm-uga.github.io/pcadapt/articles/pcadapt.html). I like using pcadapt because it doesn't make any assumptions regarding population structure, and tends to be the least conservative. At this stage I like removing anything that could potentially be an outlier to obtain a neutral dataset. If you want to use outlier identification to make inferences regarding selection, I recommand combining resutls from multiple outlier analyses. For example the program [OutFlank](http://rstudio-pubs-static.s3.amazonaws.com/305384_9aee1c1046394fb9bd8e449453d72847.html) which is an FST based approach and tends to be much more conservative. Pcadapt (and OutFlank) also runs well with large WGS datasets. More "oldschool" applications inteded for smaller datasets simply can't handle large datasets or take ages to run. The next piece of code shows how to run the shell script which contains a custom R script to run pcadapt. See the pcadapt directory for explenation what the script does and which R packages need to be isntalled before you can run this script. This input for pcadapt in plink (bed) format which we have generated in the previous script, and if you provided a --pop_file you can already get some insights into possible population structure.
+```
+#!/bin/bash
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=100G
+#SBATCH --partition=bigmem
+#SBATCH --time=2-0:00
+#SBATCH --job-name=outlier_selection
+
+###run input
+PROJECT=$1
+SET=$PROJECT'_'$2
+
+###load packages
+module load htslib/1.9
+module load vcftools/0.1.16
+module load bcftools/1.10.1
+module load R/4.0.2
+module load plink/1.90
+
+#Rscript paths
+R=$SCRATCH/scripts/population_genomics/4_variant_filtering/R
+pcadapt=$R/pcadapt_shell.R
+vcf2R=$R/vcf2Rinput.R
+
+###resrouces
+pop_file=$SCRATCH/projects/$PROJECT/resources/sample_info/$PROJECT'_pop_info.tsv'
+
+###set paths
+VCF=$SCRATCH/projects/$PROJECT/data/snp/$SET/$SET
+PCADAPT=$SCRATCH/projects/$PROJECT/output/$SET/outlier_analyses/pcadapt
+
+### create directories
+#mkdir $TMP
+mkdir -p $PCADAPT
+
+##################################### filter outlier loci  #############################
+QVAL=0.05
+K=1
+Rscript $pcadapt --plink   $VCF'_qc'      \
+                 --out     $PCADAPT/$SET  \
+                 --K0      5              \
+                 --K       $K             \
+                 --maf     0.05           \
+                 --q       $QVAL          \
+                 --slw     50000          \
+                 --minNsnp 5              \
+                 --mode    full
+
+#filter vcf file for outliers
+if [ -e $PCADAPT/$SET*'_K'$K'_q'$QVAL'_all_outliers.tsv' ]
+then
+ #extract SNP info from outlier list
+ tail -n +2 $PCADAPT/$SET*'_K'$K'_q'$QVAL'_all_outliers.tsv' |  awk '{print $2}' | sed -e 's/:/\t/p' > $PCADAPT/$SET'_all_outlier_LOC.tsv'
+ #outputting outlier vcf file containing all snps
+ vcftools --gzvcf $VCF'_qc.vcf.gz'                        \
+          --positions $PCADAPT/$SET'_all_outlier_LOC.tsv' \
+          --out $VCF'_outliers'                           \
+          --recode-INFO-all                               \
+          --recode
+ mv $VCF'_outliers.recode.vcf' $VCF'_outliers.vcf'
+ bgzip -i $VCF'_outliers.vcf' 
+fi			
+```
