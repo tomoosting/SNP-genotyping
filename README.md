@@ -398,7 +398,7 @@ then
 
 fi			
 ```
-Almost there! Now that we have identified potential outlier loci we can remove them from our high-quality SNP data set. Finally, we will remove SNPs not in Hardy-Weinberg equilibrium (HWA), low frequency alleles (maf), and perform thinning and linkage disequilibrium (LD) pruning to obtain independently segregating loci.
+Almost there! Now that we have identified potential outlier loci we can remove them from our high-quality SNP data set. Finally, we will remove SNPs not in Hardy-Weinberg equilibrium (HWA), low frequency alleles (maf), and perform thinning and linkage disequilibrium (LD) pruning to obtain independently segregating loci. If you don't have any information on how quick linkage disequilibrium decays you have a look at the LD directory and run the LDdecay script. Thinning drastically reduces the dataset but could still contain a number of linked loci. To weed out the last SNPs in linkage we run plink to identify any remove these. The final step is to convert the vcf.gz file to .gds .genlight and .bed (plink) formats which will allow you to perform a range of population genomics analsyes.
 ```
 #!/bin/bash
 #SBATCH --cpus-per-task=4
