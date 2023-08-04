@@ -328,7 +328,9 @@ Rscript $gds2plink --gds_file $VCF.gds \
 #rm -r $TMP
 ```
 #### Identify outlier SNPs
-Now that we have a vcf file containing high-quality SNPs we can identify outlier loci. There are many programs that that can be used to identify outliers. Here we'll use [pcadapt](https://bcm-uga.github.io/pcadapt/articles/pcadapt.html). I like using pcadapt because it doesn't make any assumptions regarding population structure, and tends to be the least conservative. At this stage I like removing anything that could potentially be an outlier to obtain a neutral dataset. If you want to use outlier identification to make inferences regarding selection, I recommand combining resutls from multiple outlier analyses. For example the program [OutFlank](http://rstudio-pubs-static.s3.amazonaws.com/305384_9aee1c1046394fb9bd8e449453d72847.html) which is an FST based approach and tends to be much more conservative. Pcadapt (and OutFlank) also runs well with large WGS datasets. More "oldschool" applications inteded for smaller datasets simply can't handle large datasets or take ages to run. The next piece of code shows how to run the shell script which contains a custom R script to run pcadapt. See the pcadapt directory for explenation what the script does and which R packages need to be isntalled before you can run this script. This input for pcadapt in plink (bed) format which we have generated in the previous script, and if you provided a --pop_file you can already get some insights into possible population structure.
+Now that we have a vcf file containing high-quality SNPs we can identify outlier loci. There are many programs that that can be used to identify outliers. Here we'll use [pcadapt](https://bcm-uga.github.io/pcadapt/articles/pcadapt.html). I like using pcadapt because it doesn't make any assumptions regarding population structure, and tends to be the least conservative. At this stage I like removing anything that could potentially be an outlier to obtain a neutral dataset. 
+If you want to use outlier identification to make inferences regarding selection, I recommand combining resutls from multiple outlier analyses. For example the program [OutFlank](http://rstudio-pubs-static.s3.amazonaws.com/305384_9aee1c1046394fb9bd8e449453d72847.html) which is an FST based approach and tends to be much more conservative. Pcadapt (and OutFlank) also runs well with large WGS datasets. More "oldschool" applications inteded for smaller datasets simply can't handle large datasets or take ages to run. The next piece of code shows how to run the shell script which contains a custom R script to run pcadapt. 
+See the pcadapt directory for explenation what the script does and which R packages need to be isntalled before you can run this script. This input for pcadapt in plink (bed) format which we have generated in the previous script, and if you provided a --pop_file you can already get some insights into possible population structure. If you prefer to perform outlier identification on your desktop I have also provided a markdown (.Rmd) version of this analyses.
 ```
 #!/bin/bash
 #SBATCH --cpus-per-task=4
@@ -390,5 +392,95 @@ then
           --recode
  mv $VCF'_outliers.recode.vcf' $VCF'_outliers.vcf'
  bgzip -i $VCF'_outliers.vcf' 
+
+ Rscript $vcf2R --gzvcf $VCF'_outliers.vcf.gz' \
+		--snprelate_out $VCF'_outliers'	
+
 fi			
+```
+Almost there! Now that we have identified potential outlier loci we can remove them from our high-quality SNP data set. Finally, we will remove SNPs not in Hardy-Weinberg equilibrium (HWA), low frequency alleles (maf), and perform thinning and linkage disequilibrium (LD) pruning to obtain independently segregating loci.
+```
+#!/bin/bash
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=10G
+#SBATCH --partition=quicktest
+#SBATCH --time=0-5:00
+#SBATCH --job-name=filter_neutral
+
+###run input
+PROJECT=$1
+SET=$PROJECT'_'$2
+
+###load packages
+module load htslib/1.9
+module load vcftools/0.1.16
+module load bcftools/1.10.1
+module load R/4.0.2
+module load plink/1.90
+
+#Rscript paths
+R=$SCRATCH/scripts/population_genomics/4_variant_filtering/R
+vcf2R=$R/vcf2Rinput.R
+gds2plink=$R/gds2plink.R
+
+###resrouces
+pop_file=$SCRATCH/projects/$PROJECT/resources/sample_info/$PROJECT'_pop_info.tsv'
+
+###set paths
+VCF=$SCRATCH/projects/$PROJECT/data/snp/$SET/$SET
+TMP=$SCRATCH/projects/$PROJECT/data/snp/$SET/tmp
+PCADAPT=$SCRATCH/projects/$PROJECT/output/$SET/outlier_analyses/pcadapt
+
+### create directories
+mkdir $TMP
+################################# filter neutral loci  ###################################
+#parameters you used to for outlier detection using pcadapt to remove the correct outliers
+QVAL=0.05
+K=1
+#remove outlier loci
+if [ -e $PCADAPT/$SET*'_K'$K'_q'$QVAL'_all_outliers.tsv' ]
+then
+ tail -n +2 $PCADAPT/$SET*'_K'$K'_q'$QVAL'_all_outliers.tsv' |  awk '{print $2}' | sed -e 's/:/\t/p' > $PCADAPT/$SET'_all_outlier_LOC.tsv'
+ vcftools --gzvcf $VCF'_qc.vcf.gz'                                \
+          --out $TMP/$SET'_tmp6'                                  \
+          --exclude-positions $PCADAPT/$SET'_all_outlier_LOC.tsv' \
+          --hwe 0.05 --maf 0.05 --thin 10000                      \
+          --recode-INFO-all --recode
+else
+ vcftools --gzvcf $VCF'_qc.vcf.gz'          \
+          --out $TMP/$SET'_tmp6'            \
+          --hwe 0.05 --maf 0.05 --thin 5000 \
+          --recode-INFO-all --recode		
+fi
+bgzip -ci $TMP/$SET'_tmp6.recode.vcf' > $TMP/$SET'_tmp6.vcf.gz'
+get vcf.gz
+Rscript $vcf2R --gzvcf $TMP/$SET'_tmp6.vcf.gz' 	\
+               --snprelate_out $TMP/$SET'_tmp6'
+#get gds
+Rscript $gds2plink --gds_file $TMP/$SET'_tmp6.gds' \
+                   --out $TMP/$SET'_tmp6'          \
+                   --pop_file $pop_file
+#filter linked sites
+plink --bfile $TMP/$SET'_tmp6'   \
+      --indep-pairwise 50 5 0.2  \
+      --out $TMP/$SET'_tmp6'
+sed -i 's/:/\t/g' $TMP/$SET'_tmp6.prune.in'
+# extract independant SNPs
+vcftools --gzvcf $TMP/$SET'_tmp6.vcf.gz'       \
+         --out $VCF'_neutral'                  \
+         --positions $TMP/$SET'_tmp6.prune.in' \
+         --recode-INFO-all --recode
+#convert to vcf.gz
+mv $VCF'_neutral.recode.vcf' $VCF'_neutral.vcf'
+bgzip -i $VCF'_neutral.vcf'
+#convert to gds
+Rscript $vcf2R --gzvcf $VCF'_neutral.vcf.gz' 	\
+               --snprelate_out $VCF'_neutral'	\
+               --genlight_out  $VCF'_neutral'
+#convert to plink					
+Rscript $gds2plink --gds_file $VCF'_neutral.gds' \
+                   --out $VCF'_neutral'          \
+                   --pop_file $pop_file
+#clean up
+rm -r $TMP/
 ```
