@@ -1,4 +1,4 @@
-# SNP genotyping
+# SNP genotyping - **REPO STILL UNDER CONSTRUCTION**
 This turorial contians my pipeline and will help you perform read alignment, genotyping, and varient filtering for WGS data. Going from high throughput Illimuna reads (fq.gz) to a ready to use SNP dataset (VCF) for population genomic analyses. This tutorial is for people who are just beginning with WGS analyses, but also for people who want to learn how to improve their analyses. 
 This tutorial assumes you have/know te following:
 * Reference genome for your species
